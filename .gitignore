@@ -1,0 +1,24 @@
+# Dataset and large files
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+*.wav
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
