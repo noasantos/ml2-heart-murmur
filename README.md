@@ -84,9 +84,12 @@ After the download the patient table should be at
 ├── results/       metrics, confusion matrices
 │   └── figures/   plots used in the slides
 ├── slides/        presentation (PDF)
+├── splits/        patient-level train/val/test split (shared by the group)
 ├── src/           reusable code
-│   ├── data.py        loading recordings and labels, patient-level splits
+│   ├── data.py        loading recordings and labels, patient-level splits, windowed dataset
 │   ├── features.py    pre-processing and feature extraction
+│   ├── preprocess.py  builds the feature cache, the split and the training statistics
+│   ├── eda.py         exploration figures and data summary
 │   ├── models.py      MLP / CNN / RNN definitions
 │   ├── train.py       training loop
 │   └── evaluate.py    weighted accuracy, confusion matrix, patient aggregation
@@ -105,7 +108,144 @@ pip install -r requirements.txt
 
 ## How to run
 
-To be completed as the work progresses.
+All commands run from the repository root with the virtual environment active.
+
+### 1. Pre-processing (about 20 s)
+
+```bash
+python -m src.preprocess
+```
+
+This reads every recording, applies the pre-processing below and caches the
+result in `data/cache/band25-800/` (not versioned, about 900 MB). It also
+creates the patient split `splits/patient_split.csv` if it does not exist yet.
+The split is versioned, so the whole group trains and evaluates on the same
+patients.
+
+Pre-processing of each recording:
+
+1. band-pass filter 25-800 Hz (4th-order Butterworth, zero phase);
+2. amplitude normalization (zero mean, unit standard deviation);
+3. log-mel spectrogram: 64 bands (25-800 Hz), 50 ms window, 10 ms step
+   (100 frames per second);
+4. standardization of each row with the mean/std of the **training** split
+   only (`data/cache/band25-800/logmel_stats.npz`, `mfcc_stats.npz`).
+
+Split: 70/15/15 by patient, stratified by `Murmur`, seed 42
+(train 658, val 142, test 142 patients).
+
+Training labels are per recording: a Present patient's recording taken at a
+location where the murmur was not heard (`Murmur locations`) is labelled
+Absent. Evaluation always uses the patient label.
+
+### 2. Loading the data in a model
+
+```python
+import pandas as pd
+from torch.utils.data import DataLoader
+from src.data import CACHE_DIR, WindowDataset, get_split_manifest, load_split
+
+manifest = pd.read_csv(CACHE_DIR / "manifest.csv")
+split = load_split()
+
+train_ds = WindowDataset(get_split_manifest(manifest, split, "train"),
+                         window_s=4.0, hop_s=2.0)
+loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+x, y, rec_idx = next(iter(loader))   # x: (64, 64 mel bands, 400 frames)
+
+x_cnn = x.unsqueeze(1)      # (batch, 1, 64, 400)  2D CNN
+x_rnn = x.transpose(1, 2)   # (batch, 400, 64)     RNN, time steps first
+```
+
+`rec_idx` indexes `train_ds.recordings`, which has the `patient_id` of each
+window, to aggregate window predictions into one prediction per patient.
+`train_ds.n_features` is the number of rows of `x` (the RNN `input_size`).
+The dataset loads the training statistics of the chosen variant by itself.
+
+### Pre-processing variants
+
+The pre-processing choices are compared on **validation**, training the same
+model with the same hyperparameters on each variant and changing only one
+setting at a time. Every variant is a `WindowDataset` argument:
+
+| Choice | Default | Alternatives | How |
+|---|---|---|---|
+| Window length | 4 s, 2 s hop | 2 s, 6 s ... | `window_s=2.0, hop_s=1.0` |
+| Input feature | log-mel, 64 rows | MFCC: 20 coefficients + 20 deltas, 40 rows | `feature="mfcc"` |
+| Band-pass | 25-800 Hz | 25-400 Hz (or any band) | `band=(25, 400)` after `python -m src.preprocess --band 25 400` |
+| Unannotated edges | kept | cut, training set only | `trim_to_annotation=True` |
+
+Each band is cached in its own folder (`data/cache/band25-400/` ...), so the
+variants coexist; building one takes about 20 s and 900 MB. Validation and
+test always use `trim_to_annotation=False`: the hidden data may not have the
+.tsv files.
+
+```python
+train_ds = WindowDataset(train_rec, feature="mfcc", band=(25, 400))
+val_ds = WindowDataset(val_rec, feature="mfcc", band=(25, 400))  # same variant
+```
+
+### 3. Evaluation: one prediction per patient
+
+`src/evaluate.py` turns window predictions into one label per patient and
+computes the metrics. Its weighted accuracy gives exactly the same values as
+the official Challenge code (checked on 3000 random cases).
+
+```python
+from src.evaluate import (evaluate_patients, format_metrics, patient_predictions,
+                          plot_confusion_matrix, recording_probabilities,
+                          tune_thresholds, window_probabilities)
+
+labels = split.set_index("patient_id")["murmur"]
+val_ds = WindowDataset(get_split_manifest(manifest, split, "val"))
+test_ds = WindowDataset(get_split_manifest(manifest, split, "test"))
+
+def rec_probs(ds):
+    probs, rec = window_probabilities(model, ds, transform=lambda x: x.unsqueeze(1))  # RNN: x.transpose(1, 2)
+    return recording_probabilities(probs, rec, len(ds.recordings))
+
+# thresholds chosen on validation only
+t_p, t_u, _ = tune_thresholds(rec_probs(val_ds), val_ds.recordings["patient_id"], labels)
+
+# final numbers on test, with the thresholds fixed
+pred = patient_predictions(rec_probs(test_ds), test_ds.recordings["patient_id"],
+                           t_present=t_p, t_unknown=t_u)
+metrics = evaluate_patients(pred, labels)
+print(format_metrics(metrics))
+plot_confusion_matrix(metrics["confusion_matrix"], "results/figures/cm_cnn_test.png", "CNN, test")
+```
+
+Aggregation: the probability of a recording is the mean over its windows. The
+patient is Present if some recording has P(Present) >= `t_present`, otherwise
+Unknown if some recording has P(Unknown) >= `t_unknown`, otherwise Absent (a
+murmur may be audible at a single location). `rule="mean"` averages the
+recordings instead.
+
+Reference values (patient level, same on val and test):
+
+| Trivial classifier | Weighted accuracy |
+|---|---|
+| always Present | 0.500 |
+| always Absent | 0.389 |
+| always Unknown | 0.111 |
+
+Do not report the validation weighted accuracy obtained after tuning the
+thresholds on validation: it is optimistic. The reported numbers come from the
+test set. Because the metric rewards predicting Present, even an untrained
+network with tuned thresholds scored 0.53 (val) and 0.57 (test) in our checks,
+so a model is only useful if it clearly beats about 0.55-0.60.
+
+`save_submission(pred, "submission/predictions.csv")` writes the csv of the
+bonus competition.
+
+### 4. Exploration figures
+
+```bash
+python -m src.eda
+```
+
+Writes the figures in `results/figures/` and `results/data_summary.csv`
+(patients, recordings and 4 s windows per split and class).
 
 ## Hidden data predictions
 
@@ -118,6 +258,23 @@ patient_id,murmur
 ```
 
 The file goes in `submission/`.
+
+When the hidden recordings are released (folder with the patient `.txt`,
+`.hea` and `.wav` files, e.g. `data/hidden/`), cache them with the same
+variant as the final model; no labels or `.tsv` files are needed:
+
+```bash
+python -m src.preprocess --recordings-dir data/hidden --no-labels --cache-dir data/cache_hidden
+```
+
+```python
+from src.evaluate import save_submission
+hidden = pd.read_csv("data/cache_hidden/manifest.csv")
+hidden_ds = WindowDataset(hidden, cache_dir="data/cache_hidden")  # statistics from the training cache
+pred = patient_predictions(rec_probs(hidden_ds), hidden_ds.recordings["patient_id"],
+                           t_present=t_p, t_unknown=t_u)
+save_submission(pred, "submission/predictions.csv")
+```
 
 ## Deliverables
 

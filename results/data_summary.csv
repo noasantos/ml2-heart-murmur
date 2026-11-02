@@ -1,0 +1,10 @@
+split,class,patients,recordings,windows
+train,Present,125,350,3867
+train,Unknown,48,110,1151
+train,Absent,485,1750,19135
+val,Present,27,74,751
+val,Unknown,10,24,260
+val,Absent,105,376,4207
+test,Present,27,75,805
+test,Unknown,10,22,251
+test,Absent,105,382,4145
