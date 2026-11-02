@@ -2,6 +2,7 @@ numpy
 pandas
 scipy
 scikit-learn
+joblib
 matplotlib
 seaborn
 librosa
