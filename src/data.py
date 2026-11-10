@@ -45,6 +45,8 @@ def load_patients(labels_csv: Path = LABELS_CSV) -> pd.DataFrame:
         "murmur": df["Murmur"],
         "murmur_locations": df["Murmur locations"].fillna(""),
         "outcome": df["Outcome"],
+        # second ID of subjects who attended both campaigns (CC2014 and CC2015)
+        "additional_id": pd.to_numeric(df["Additional ID"], errors="coerce").astype("Int64"),
     })
     return out
 
@@ -169,27 +171,59 @@ def build_manifest(recordings_dir: Path = RECORDINGS_DIR,
 # Patient-level split
 # ---------------------------------------------------------------------------
 
+# Stratification label of a subject with two IDs and different labels.
+_SPLIT_PRIORITY = {"Present": 0, "Unknown": 1, "Absent": 2}
+
+
+def subject_groups(patients: pd.DataFrame) -> pd.Series:
+    """Subject of each patient ID.
+
+    Some children attended both screening campaigns and have two IDs, linked by
+    the ``Additional ID`` column. Both IDs get the same group (the smaller ID),
+    so the split can keep each subject in a single subset, as the dataset page
+    requires. Without an ``additional_id`` column every ID is its own group.
+    """
+    group = dict(zip(patients["patient_id"], patients["patient_id"]))
+    if "additional_id" in patients.columns:
+        ids = set(patients["patient_id"])
+        for pid, other in zip(patients["patient_id"], patients["additional_id"]):
+            if pd.notna(other) and int(other) in ids:
+                g = min(pid, int(other))
+                group[pid] = group[int(other)] = g
+    return patients["patient_id"].map(group)
+
+
 def make_patient_split(patients: pd.DataFrame, val_size: float = 0.15,
                        test_size: float = 0.15, seed: int = 42) -> pd.DataFrame:
-    """Stratified train/val/test split of patients by the Murmur label.
+    """Stratified train/val/test split by subject.
+
+    Both IDs of a child who attended the two campaigns fall in the same subset
+    (see ``subject_groups``). Stratification uses one label per subject: Present
+    if any of its IDs is Present, else Unknown if any is Unknown, else Absent.
+    Each ID keeps its own Murmur label.
 
     Returns a DataFrame with columns patient_id, murmur, split.
     """
     from sklearn.model_selection import train_test_split
 
-    ids, y = patients["patient_id"].to_numpy(), patients["murmur"].to_numpy()
-    trainval_ids, test_ids, trainval_y, _ = train_test_split(
-        ids, y, test_size=test_size, stratify=y, random_state=seed)
-    train_ids, val_ids = train_test_split(
-        trainval_ids, test_size=val_size / (1 - test_size), stratify=trainval_y,
+    out = patients[["patient_id", "murmur"]].copy()
+    out["group"] = subject_groups(patients).to_numpy()
+    rank = out["murmur"].map(_SPLIT_PRIORITY)
+    group_y = rank.groupby(out["group"]).min()
+    g_ids, g_y = group_y.index.to_numpy(), group_y.to_numpy()
+
+    trainval_g, test_g, trainval_y, _ = train_test_split(
+        g_ids, g_y, test_size=test_size, stratify=g_y, random_state=seed)
+    train_g, val_g = train_test_split(
+        trainval_g, test_size=val_size / (1 - test_size), stratify=trainval_y,
         random_state=seed)
 
-    split = pd.Series("train", index=ids)
-    split[val_ids] = "val"
-    split[test_ids] = "test"
-    out = patients[["patient_id", "murmur"]].copy()
-    out["split"] = split.loc[out["patient_id"]].to_numpy()
-    return out.sort_values("patient_id").reset_index(drop=True)
+    split = pd.Series("train", index=g_ids)
+    split[val_g] = "val"
+    split[test_g] = "test"
+    out["split"] = split.loc[out["group"]].to_numpy()
+    return (out[["patient_id", "murmur", "split"]]
+            .sort_values("patient_id").reset_index(drop=True))
 
 
 def load_split(path: Path = SPLIT_PATH) -> pd.DataFrame:
