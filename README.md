@@ -14,6 +14,9 @@ full project statement is in [`docs/project_statement.pdf`](docs/project_stateme
 |  Telma Freitas    |  202301622   |
 |  Yunnie Zita    |                |
 
+
+Professor: Francesco Renna
+
 ## Task
 
 Each patient has to be classified into one of three classes according to
@@ -132,7 +135,10 @@ Pre-processing of each recording:
    only (`data/cache/band25-800/logmel_stats.npz`, `mfcc_stats.npz`).
 
 Split: 70/15/15 by patient, stratified by `Murmur`, seed 42
-(train 658, val 142, test 142 patients).
+(train 654, val 146, test 142 patients). 70 children attended both
+screening campaigns and have two patient IDs, linked by the `Additional ID`
+column of `training_data.csv`. The split groups both IDs of a child, so they
+always fall in the same subset (`subject_groups` in `src/data.py`).
 
 Training labels are per recording: a Present patient's recording taken at a
 location where the murmur was not heard (`Murmur locations`) is labelled
@@ -221,18 +227,19 @@ Unknown if some recording has P(Unknown) >= `t_unknown`, otherwise Absent (a
 murmur may be audible at a single location). `rule="mean"` averages the
 recordings instead.
 
-Reference values (patient level, same on val and test):
+Reference values (patient level):
 
-| Trivial classifier | Weighted accuracy |
-|---|---|
-| always Present | 0.500 |
-| always Absent | 0.389 |
-| always Unknown | 0.111 |
+| Trivial classifier | Val | Test |
+|---|---|---|
+| always Present | 0.493 | 0.525 |
+| always Absent | 0.370 | 0.377 |
+| always Unknown | 0.137 | 0.098 |
 
 Do not report the validation weighted accuracy obtained after tuning the
 thresholds on validation: it is optimistic. The reported numbers come from the
 test set. Because the metric rewards predicting Present, even an untrained
-network with tuned thresholds scored 0.53 (val) and 0.57 (test) in our checks,
+network with tuned thresholds scored 0.53 (val) and 0.57 (test) in our checks on
+the first version of the split,
 so a model is only useful if it clearly beats about 0.55-0.60.
 
 `save_submission(pred, "submission/predictions.csv")` writes the csv of the
