@@ -10,9 +10,9 @@ full project statement is in [`docs/project_statement.pdf`](docs/project_stateme
 
 | Name | Student number |
 |------|----------------|
-|      |                |
-|      |                |
-|      |                |
+|  Noa Santos    |                |
+|  Telma Freitas    |  202301622   |
+|  Yunnie Zita    |                |
 
 ## Task
 
