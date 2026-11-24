@@ -10,6 +10,10 @@ models/*
 *.pth
 *.ckpt
 
+# Final model (3 CRNN, ~0.9 MB each), shipped so the results reproduce without training
+!models/crnn_specaug_seed*.pt
+!models/final_ensemble.json
+
 # Python
 __pycache__/
 *.py[cod]

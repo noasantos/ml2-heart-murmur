@@ -1,0 +1,43 @@
+{
+  "final_model": {
+    "ensemble": "3 CRNN",
+    "members": [
+      "crnn_specaug_seed42",
+      "crnn_specaug_seed1",
+      "crnn_specaug_seed2"
+    ],
+    "t_present": 0.4,
+    "t_unknown": 0.65,
+    "val_wa": 0.8239
+  },
+  "always_present_wa": 0.5253623188405797,
+  "weighted_accuracy": 0.8586956521739131,
+  "accuracy": 0.852112676056338,
+  "macro_f1": 0.6603716710564823,
+  "confusion_matrix": [
+    [
+      28,
+      3,
+      7
+    ],
+    [
+      0,
+      2,
+      6
+    ],
+    [
+      1,
+      4,
+      91
+    ]
+  ],
+  "recall_Present": 0.9655172413793104,
+  "precision_Present": 0.7368421052631579,
+  "f1_Present": 0.835820895522388,
+  "recall_Unknown": 0.2222222222222222,
+  "precision_Unknown": 0.25,
+  "f1_Unknown": 0.23529411764705882,
+  "recall_Absent": 0.875,
+  "precision_Absent": 0.9479166666666666,
+  "f1_Absent": 0.91
+}

@@ -9,5 +9,6 @@ librosa
 soundfile
 torch
 torchaudio
+torchvision
 tqdm
 jupyter
